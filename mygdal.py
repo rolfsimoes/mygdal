@@ -3,6 +3,7 @@
 from osgeo import osr, gdal
 import numpy
 import datetime
+import os
 
 __error_stacks_length__ = 'DiffStacksLength'
 __error_stacks_length_msg__ = 'The tif stacks\' length are different.'
@@ -278,9 +279,6 @@ class MyTCSV:
                 return default
             raise Exception(__error_required_tag__, __error_required_tag_msg__ % tag_name)
 
-    def has_tag_name(self, tag_name):
-        return tag_name in self.tags
-
     def resolve_field_ref(self, field_ref):
         """
         If the data has header, tags may contains references to fields's name.
@@ -298,6 +296,12 @@ class MyTCSV:
             return int(field_ref)
 
     def get_data_key_indexes(self, field_ref):
+        """
+        Returns a dictionary with all distinct values of a field as its keys. The values of each key
+        is a list with the indexes of all corresponding field's rows of the given key.
+        :param field_ref: string
+        :return: dict
+        """
         result = {}
         field = self.resolve_field_ref(field_ref)
         for i in range(len(self.data[field])):
@@ -316,7 +320,7 @@ class Timeline(MyTCSV):
     TAG_DATE_FIELD = 'date_field'
     TAG_DATE_FORMAT = 'date_format'
     TAG_DOY_FILE = 'doy_tif_filepath'
-    TAG_DAY_FACTOR = 'doy_factor'
+    TAG_DAY_FACTOR = 'day_factor'
 
     def __init__(self, filename, date_format='%Y-%m-%d', doy_file='doy.tif', day_factor=1.0):
         super(Timeline, self).__init__(filename)
@@ -353,6 +357,10 @@ class Timeline(MyTCSV):
                             if mask_nodata[i] else dates[i] for i in range(len(dates))])
 
     @staticmethod
+    def days_from_base_date(dates, base_date):
+        return numpy.array([(value - base_date).days for value in dates])
+
+    @staticmethod
     def mask_timespan_dates(dates, date_from=None, date_to=None):
         return (dates >= date_from) * (dates <= date_to)
 
@@ -368,14 +376,17 @@ class Samples(MyTCSV):
     TAG_TIMELINE_FILE = 'timeline_filepath'
     TAG_BANDS_PATHS = 'bands_filepaths'
     TAG_BANDS_FACTORS = 'bands_factors'
+    TAG_BASE_MONTH = 'base_month'
 
     def __init__(self, filename, date_format='%Y-%m-%d', timeline_file='timeline.csv', bands_files='ndvi.tif,evi.tif'):
         super(Samples, self).__init__(filename)
         self.tags[Samples.TAG_DATE_FORMAT] = self.get_tag_value(Samples.TAG_DATE_FORMAT, date_format)
         self.tags[Samples.TAG_TIMELINE_FILE] = self.get_tag_value(Samples.TAG_TIMELINE_FILE, timeline_file)
         self.tags[Samples.TAG_BANDS_PATHS] = self.get_tag_value(Samples.TAG_BANDS_PATHS, bands_files)
-        self.timeline = Timeline(self.tags[Samples.TAG_TIMELINE_FILE])
-        self.bands = [Mygdal(value) for value in self.tags[Samples.TAG_BANDS_PATHS]]
+        self.tags[Samples.TAG_BASE_MONTH] = self.get_tag_value(Samples.TAG_BASE_MONTH)
+        self.timeline = Timeline(os.path.join(os.path.dirname(filename), self.tags[Samples.TAG_TIMELINE_FILE]))
+        self.bands = [Mygdal(os.path.join(os.path.dirname(filename), value))
+                      for value in self.tags[Samples.TAG_BANDS_PATHS]]
         self.bands_factor = [value for value in self.tags[Samples.TAG_BANDS_FACTORS]]
         if len(self.bands) != len(self.bands_factor):
             raise Exception(__error_bands_tags__, __error_bands_tags_msg__)
@@ -396,6 +407,8 @@ class Samples(MyTCSV):
         elif tag_name == Samples.TAG_BANDS_FACTORS:
             return [to_float(value.strip(), self.tags[MyTCSV.TAG_DECIMAL])
                     for value in self.tags[Samples.TAG_BANDS_FACTORS].strip().split(',')]
+        elif tag_name == Samples.TAG_BASE_MONTH:
+            return int(self.get_tag_value(Samples.TAG_BASE_MONTH))
         return super(Samples, self).__transform_tag_value__(tag_value, tag_value)
 
     def __transform_row_data__(self, fields):
@@ -433,26 +446,57 @@ class Samples(MyTCSV):
                                                    self.tags[Samples.TAG_PROJ_WKT])
         return result
 
-    def get_samples_timeseries(self, samples_index=None, filter_sample_interval=False):
+    def get_samples_timeseries(self, samples_index=None, time_days=True):
         result = []
-        samples_pixels = self.timeline.doy_stack.geolocs_to_pixels(self.reproject_samples_to(self.timeline.doy_stack,
-                                                                                             samples_index))
+        samples_pixels = self.timeline.doy_stack.geolocs_to_pixels(
+            self.reproject_samples_to(self.timeline.doy_stack, samples_index))
         for i in range(len(samples_pixels)):
             pixel_timeseries = []
-            date_from = self.data[self.tags[Samples.TAG_FROM_DT_FIELD]][i]
-            date_to = self.data[self.tags[Samples.TAG_FROM_DT_FIELD]][i]
+            pixel_date = self.data[self.tags[Samples.TAG_FROM_DT_FIELD]][i]
+            date_from = datetime.datetime(pixel_date.year, self.tags[Samples.TAG_BASE_MONTH], 1)
+            date_to = datetime.datetime(pixel_date.year + 1, self.tags[Samples.TAG_BASE_MONTH], 1)
             pixel_dates = self.timeline.read_pixel_dates(samples_pixels[i])
             for j in range(len(self.bands)):
                 pixel_values = self.bands[j].read_pixel_values(samples_pixels[i])
                 mask = (pixel_dates != self.timeline.doy_stack.values_nodata) * \
                        (pixel_values != self.bands[j].values_nodata)
-                if filter_sample_interval:
-                    if date_from and date_to:
-                        mask = mask * (pixel_dates >= date_from) * (pixel_dates <= date_to)
-                    elif date_from:
-                        mask *= pixel_dates >= date_from
-                    elif date_to:
-                        mask *= pixel_dates <= date_to
-                pixel_timeseries.append([pixel_values[mask] * self.bands_factor[j], pixel_dates[mask]])
+                if date_from:
+                    mask *= pixel_dates >= date_from
+                if date_to:
+                    mask *= pixel_dates <= date_to
+                pixel_timeseries.append([pixel_values[mask] * self.bands_factor[j],
+                                         self.timeline.days_from_base_date(pixel_dates, date_from)[mask]
+                                         if time_days else pixel_dates[mask]])
             result.append(pixel_timeseries)
         return result
+
+
+class DOY:
+    def __init__(self, base_month, base_day):
+        self.base_month = base_month
+        self.base_day = base_day
+
+    def __call__(self, date):
+        if self.base_month < date.month or (self.base_month == date.month and self.base_day <= date.day):
+            return (date - datetime.datetime(date.year, self.base_month, self.base_day)).days
+        else:
+            return (date - datetime.datetime(date.year - 1, self.base_month, self.base_day)).days
+
+    def array(self, year, count):
+        if count <= 0:
+            return
+        yield 0
+        start = datetime.datetime(year, self.base_month, self.base_day)
+        end = datetime.datetime(year + 1, self.base_month, self.base_day)
+        if count > 1:
+            delta = (end - start) / (count - 1)
+            for i in range(1, count):
+                yield (delta * i).days
+
+    def array2(self, count):
+        if count <= 0:
+            return
+        yield 0
+        delta = 365 / (count - 1)
+        for i in range(1, count):
+            yield int(delta * i)
