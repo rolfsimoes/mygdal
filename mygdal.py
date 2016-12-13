@@ -19,8 +19,8 @@ __error_required_tag__ = 'RequiredTagMissing'
 __error_required_tag_msg__ = 'Tag \'%s\' is required but is missing in your file.'
 __error_invalid_bbox__ = 'InvalidBoundBox'
 __error_invalid_bbox_msg__ = 'Invalid bound box.'
-__error_bands_tags__ = 'BandsTagsError'
-__error_bands_tags_msg__ = 'bands_paths and bands_factors tags must have the same length.'
+__error_attrs_tags__ = 'BandsTagsError'
+__error_attrs_tags_msg__ = 'attrs_paths and attrs_factors tags must have the same length.'
 
 
 def ord_pair(i, j):
@@ -28,9 +28,10 @@ def ord_pair(i, j):
 
 
 def to_float(value, decimal):
+    result = value
     if decimal != '.':
-        value.replace(decimal, '.')
-    return float(value)
+        result = result.replace(decimal, '.')
+    return float(result)
 
 
 def to_date(value, date_format):
@@ -65,8 +66,9 @@ class Mygdal:
         self.geo_lr = self.pixels_to_geolocs(ord_pair(self.width - 1, self.height - 1))
         self.geo_size = self.geo_lr - self.geo_ul
         self.geo_size_abs = numpy.abs(self.geo_size)
-        self.values_nodata = numpy.array([self.dataset.GetRasterBand(i).GetNoDataValue()
-                                          for i in range(1, self.dataset.RasterCount + 1)])
+        self.attrs_len = self.dataset.RasterCount
+        self.attrs_nodata = numpy.array([self.dataset.GetRasterBand(i).GetNoDataValue()
+                                         for i in range(1, self.dataset.RasterCount + 1)])
 
     def close_dataset(self):
         self.dataset = None
@@ -105,7 +107,7 @@ class Mygdal:
             lr = bbox_lr
         return ul + numpy.array(numpy.random.rand(n, 2) * (lr - ul), dtype=numpy.dtype(int))
 
-    def are_valid_geolocs(self, geolocs):
+    def mask_valid_geolocs(self, geolocs):
         """
         Verifies if each point in geolocs belongs to image bounding box.
         Points in @geolocs must be in same system of reference than image's.
@@ -113,10 +115,10 @@ class Mygdal:
         :param geolocs: numpy.array
         :return: bool
         """
-        return numpy.any((geolocs < (self.geo_ul * numpy.sign(self.geo_resolution))) *
-                         (geolocs > (self.geo_lr * numpy.sign(self.geo_resolution))))
+        return (geolocs >= (self.geo_ul * numpy.sign(self.geo_resolution))) * \
+               (geolocs <= (self.geo_lr * numpy.sign(self.geo_resolution)))
 
-    def are_valid_pixels(self, pixels):
+    def mask_valid_pixels(self, pixels):
         """
         Verifies if each pixel in pixels belongs to image size.
         Pixels in @pixels parameter must be in same system of reference than image's.
@@ -124,7 +126,7 @@ class Mygdal:
         :param pixels: numpy.array
         :return: bool
         """
-        return numpy.any((pixels < numpy.array([0, 0])) * (pixels > self.size))
+        return (pixels >= numpy.array([0, 0])) * (pixels <= self.size)
 
     def pixels_to_geolocs(self, pixels):
         result = numpy.array([])
@@ -144,12 +146,27 @@ class Mygdal:
             result = numpy.array(result_geo_resolution + result_geo_skew, dtype=numpy.dtype(int))
         return result
 
-    def read_pixel_values(self, pixel):
-        result = self.dataset.ReadAsArray(int(pixel[Mygdal.GT_X]), int(pixel[Mygdal.GT_Y]), xsize=1, ysize=1)
-        return numpy.reshape(result, len(result))
+    def read_pixel(self, pixel, factor_value=1.0, default_value=None, min_value=None, max_value=None):
+        if len(pixel):
+            result = self.dataset.ReadAsArray(int(pixel[Mygdal.GT_X]), int(pixel[Mygdal.GT_Y]), xsize=1, ysize=1)
+            result = numpy.reshape(result, self.attrs_len)
+            good_data = result != self.attrs_nodata
+            result[good_data] *= factor_value
+            if default_value is not None:
+                result[~good_data] = default_value
+            if min_value is not None:
+                result[good_data * result < min_value] = default_value
+            if max_value is not None:
+                result[good_data * result > max_value] = default_value
+            return result
 
-    def mask_nodata_pixel_bands(self, pixel_bands):
-        return pixel_bands != self.values_nodata
+    def read_pixels(self, pixels, factor=1.0, default_value=None, min_value=None, max_value=None):
+        if len(pixels):
+            result = self.read_pixel(pixels[0], default_value, min_value, max_value)
+            for i in range(1, len(pixels)):
+                result_pixel = self.read_pixel(pixels[i], factor, default_value, min_value, max_value)
+                result = numpy.vstack((result, result_pixel))
+            return result
 
     def reproject_geolocs_from(self, geolocs, geo_srs_wkt_from):
         """
@@ -167,12 +184,32 @@ class Mygdal:
         result = numpy.array(transform.TransformPoints(geolocs))[:, 0:2]
         return result
 
+    @staticmethod
+    def mask_nodata_pixel_attrs(pixel_attrs, values_nodata):
+        """
+        Masks as False all nodata value found in pixel_attrs. Other values will be masked as True.
+        :param pixel_attrs: numpy.array
+        :param values_nodata: numpy.array
+        :return: numpy.array
+        """
+        return pixel_attrs != values_nodata
+
+    @staticmethod
+    def mask_pixel_attrs_range(pixel_attrs, min_range=None, max_range=None):
+        result = pixel_attrs
+        if min_range:
+            result = result >= min_range
+        if max_range:
+            result = result <= max_range
+        return result
+
 
 class MyTCSV:
     TAG_DELIMITER = 'delimiter'
     TAG_HAS_HEADER = 'has_header'
     TAG_DECIMAL = 'decimal_point'
     TAG_QUOTE = 'quote'
+    LIST_DELIMITER = ';'
 
     def __init__(self, filename, encoding='utf-8', delimiter=',', has_header='False', decimal='.', quote='"'):
         self.file = open(filename, encoding=encoding)
@@ -295,7 +332,7 @@ class MyTCSV:
         else:
             return int(field_ref)
 
-    def get_data_key_indexes(self, field_ref):
+    def get_dict_key_indexes(self, field_ref):
         """
         Returns a dictionary with all distinct values of a field as its keys. The values of each key
         is a list with the indexes of all corresponding field's rows of the given key.
@@ -347,8 +384,8 @@ class Timeline(MyTCSV):
         super(Timeline, self).close()
 
     def read_pixel_dates(self, pixel):
-        doys = self.doy_stack.read_pixel_values(pixel)
-        mask_nodata = self.doy_stack.mask_nodata_pixel_bands(doys)
+        doys = self.doy_stack.read_pixel(pixel)
+        mask_nodata = self.doy_stack.mask_nodata_pixel_attrs(doys, self.doy_stack.attrs_nodata)
         dates = self.data[self.tags[Timeline.TAG_DATE_FIELD]]
         if len(doys) != len(dates):
             raise Exception(__error_time_line_length__, __error_time_line_length_msg__ % (len(dates), len(doys)))
@@ -374,22 +411,26 @@ class Samples(MyTCSV):
     TAG_DATE_FORMAT = 'date_format'
     TAG_CLASS_FIELD = 'class_field'
     TAG_TIMELINE_FILE = 'timeline_filepath'
-    TAG_BANDS_PATHS = 'bands_filepaths'
-    TAG_BANDS_FACTORS = 'bands_factors'
+    TAG_ATTRS_PATH = 'attrs_filepaths'
+    TAG_ATTRS_NAME = 'attrs_names'
+    TAG_ATTRS_FACTOR = 'attrs_factors'
     TAG_BASE_MONTH = 'base_month'
 
-    def __init__(self, filename, date_format='%Y-%m-%d', timeline_file='timeline.csv', bands_files='ndvi.tif,evi.tif'):
+    def __init__(self, filename, date_format='%Y-%m-%d', timeline_file='timeline.csv', attrs_files='ndvi.tif;evi.tif',
+                 attrs_name='ndvi;evi'):
         super(Samples, self).__init__(filename)
         self.tags[Samples.TAG_DATE_FORMAT] = self.get_tag_value(Samples.TAG_DATE_FORMAT, date_format)
         self.tags[Samples.TAG_TIMELINE_FILE] = self.get_tag_value(Samples.TAG_TIMELINE_FILE, timeline_file)
-        self.tags[Samples.TAG_BANDS_PATHS] = self.get_tag_value(Samples.TAG_BANDS_PATHS, bands_files)
+        self.tags[Samples.TAG_ATTRS_PATH] = self.get_tag_value(Samples.TAG_ATTRS_PATH, attrs_files)
+        self.tags[Samples.TAG_ATTRS_NAME] = self.get_tag_value(Samples.TAG_ATTRS_NAME, attrs_name)
         self.tags[Samples.TAG_BASE_MONTH] = self.get_tag_value(Samples.TAG_BASE_MONTH)
         self.timeline = Timeline(os.path.join(os.path.dirname(filename), self.tags[Samples.TAG_TIMELINE_FILE]))
-        self.bands = [Mygdal(os.path.join(os.path.dirname(filename), value))
-                      for value in self.tags[Samples.TAG_BANDS_PATHS]]
-        self.bands_factor = [value for value in self.tags[Samples.TAG_BANDS_FACTORS]]
-        if len(self.bands) != len(self.bands_factor):
-            raise Exception(__error_bands_tags__, __error_bands_tags_msg__)
+        self.attrs = [Mygdal(os.path.join(os.path.dirname(filename), value))
+                      for value in self.tags[Samples.TAG_ATTRS_PATH]]
+        self.attrs_name = self.tags[Samples.TAG_ATTRS_NAME]
+        self.attrs_factor = self.tags[Samples.TAG_ATTRS_FACTOR]
+        if len(self.attrs) != len(self.attrs_factor):
+            raise Exception(__error_attrs_tags__, __error_attrs_tags_msg__)
 
     def __transform_tag_value__(self, tag_name, tag_value):
         if tag_name == Samples.TAG_X_FIELD:
@@ -402,11 +443,13 @@ class Samples(MyTCSV):
             return self.resolve_field_ref(tag_value)
         elif tag_name == Samples.TAG_TO_DT_FIELD:
             return self.resolve_field_ref(tag_value)
-        elif tag_name == Samples.TAG_BANDS_PATHS:
-            return [value.strip() for value in self.tags[Samples.TAG_BANDS_PATHS].strip().split(',')]
-        elif tag_name == Samples.TAG_BANDS_FACTORS:
+        elif tag_name == Samples.TAG_ATTRS_PATH:
+            return [value.strip() for value in self.tags[Samples.TAG_ATTRS_PATH].strip().split(MyTCSV.LIST_DELIMITER)]
+        elif tag_name == Samples.TAG_ATTRS_NAME:
+            return [value.strip() for value in self.tags[Samples.TAG_ATTRS_NAME].strip().split(MyTCSV.LIST_DELIMITER)]
+        elif tag_name == Samples.TAG_ATTRS_FACTOR:
             return [to_float(value.strip(), self.tags[MyTCSV.TAG_DECIMAL])
-                    for value in self.tags[Samples.TAG_BANDS_FACTORS].strip().split(',')]
+                    for value in self.tags[Samples.TAG_ATTRS_FACTOR].strip().split(MyTCSV.LIST_DELIMITER)]
         elif tag_name == Samples.TAG_BASE_MONTH:
             return int(self.get_tag_value(Samples.TAG_BASE_MONTH))
         return super(Samples, self).__transform_tag_value__(tag_value, tag_value)
@@ -428,18 +471,18 @@ class Samples(MyTCSV):
         super(Samples, self).fetch_data()
 
     def close(self):
-        for value in self.bands:
+        for value in self.attrs:
             value.close_dataset()
         self.timeline.close()
         super(Samples, self).close()
 
     def read_samples_geolocs(self, samples_index=None):
-        x_result = self.data[self.tags[Samples.TAG_X_FIELD]]
-        y_result = self.data[self.tags[Samples.TAG_Y_FIELD]]
+        result_x = self.data[self.tags[Samples.TAG_X_FIELD]]
+        result_y = self.data[self.tags[Samples.TAG_Y_FIELD]]
         if samples_index is not None:
-            x_result = [x_result[index] for index in samples_index]
-            y_result = [y_result[index] for index in samples_index]
-        return numpy.array([x_result, y_result]).T
+            result_x = [result_x[index] for index in samples_index]
+            result_y = [result_y[index] for index in samples_index]
+        return numpy.array([result_x, result_y]).T
 
     def reproject_samples_to(self, mygdal_obj, samples_index=None):
         result = mygdal_obj.reproject_geolocs_from(self.read_samples_geolocs(samples_index),
@@ -456,47 +499,17 @@ class Samples(MyTCSV):
             date_from = datetime.datetime(pixel_date.year, self.tags[Samples.TAG_BASE_MONTH], 1)
             date_to = datetime.datetime(pixel_date.year + 1, self.tags[Samples.TAG_BASE_MONTH], 1)
             pixel_dates = self.timeline.read_pixel_dates(samples_pixels[i])
-            for j in range(len(self.bands)):
-                pixel_values = self.bands[j].read_pixel_values(samples_pixels[i])
-                mask = (pixel_dates != self.timeline.doy_stack.values_nodata) * \
-                       (pixel_values != self.bands[j].values_nodata)
+            for j in range(len(self.attrs)):
+                pixel_values = self.attrs[j].read_pixel(samples_pixels[i])
+                mask = (pixel_dates != self.timeline.doy_stack.attrs_nodata) * \
+                       (pixel_values != self.attrs[j].attrs_nodata)
                 if date_from:
                     mask *= pixel_dates >= date_from
                 if date_to:
                     mask *= pixel_dates <= date_to
-                pixel_timeseries.append([pixel_values[mask] * self.bands_factor[j],
+                pixel_timeseries.append([pixel_values[mask] * self.attrs_factor[j],
                                          self.timeline.days_from_base_date(pixel_dates, date_from)[mask]
                                          if time_days else pixel_dates[mask]])
             result.append(pixel_timeseries)
         return result
 
-
-class DOY:
-    def __init__(self, base_month, base_day):
-        self.base_month = base_month
-        self.base_day = base_day
-
-    def __call__(self, date):
-        if self.base_month < date.month or (self.base_month == date.month and self.base_day <= date.day):
-            return (date - datetime.datetime(date.year, self.base_month, self.base_day)).days
-        else:
-            return (date - datetime.datetime(date.year - 1, self.base_month, self.base_day)).days
-
-    def array(self, year, count):
-        if count <= 0:
-            return
-        yield 0
-        start = datetime.datetime(year, self.base_month, self.base_day)
-        end = datetime.datetime(year + 1, self.base_month, self.base_day)
-        if count > 1:
-            delta = (end - start) / (count - 1)
-            for i in range(1, count):
-                yield (delta * i).days
-
-    def array2(self, count):
-        if count <= 0:
-            return
-        yield 0
-        delta = 365 / (count - 1)
-        for i in range(1, count):
-            yield int(delta * i)

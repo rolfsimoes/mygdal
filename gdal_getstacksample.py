@@ -7,23 +7,26 @@ import matplotlib.pyplot as plt
 if __name__ == '__main__':
     s = Samples('../data/samples_new.csv')
     s.fetch_data()
-    class_indexes = s.get_data_key_indexes('class')
+    label_dict_indexes = s.get_dict_key_indexes('label')
     # print(class_indexes)
-    samples_index = class_indexes["Forest"][:15]
-    timeseries = s.get_samples_timeseries(samples_index, True)
-    print(timeseries)
-    for i in range(len(samples_index)):
-        for j in range(len(s.bands)):
-            values = timeseries[i][j][0]
-            days = timeseries[i][j][1]
-            class_value = s.data[s.tags[Samples.TAG_CLASS_FIELD]][samples_index[i]]
-            f = interpolate.interp1d(days, values)
-            days_new = numpy.linspace(1, 360, 22, True)
-            plt.plot(days, values, 'o', days_new, f(days_new), '-')
+    print(label_dict_indexes.keys())
+    class_value = 'Soybean-maize'
+    my_samples = label_dict_indexes[class_value]
+
+    #
+    # timeseries = s.get_samples_timeseries(my_samples, True)
+    # for i in range(len(my_samples)):
+    #     for j in range(len(s.attrs)):
+    #         values = timeseries[i][j][0]
+    #         days = timeseries[i][j][1]
+    #         ordered = days.argsort()
+    #         f = interpolate.interp1d(days[ordered], values[ordered])
+    #         days_new = numpy.linspace(15, 330, 22, True)
+    #         plt.plot(days[ordered], values[ordered], 'o', days_new, f(days_new), '-')
     # sources = s.timeline.get_data_key_indexes('source')
     # print(s.timeline.data[1][sources['LT5']])
 
-    plt.legend(['ndvi', 'linear', 'cubic', 'evi', 'linear', 'cubic'], loc='best')
+    # plt.legend(['ndvi', 'linear', 'cubic', 'evi', 'linear', 'cubic'], loc='best')
     plt.title(class_value)
     plt.show()
     s.close()

@@ -1,12 +1,19 @@
 <component name="ProjectDictionaryState">
   <dictionary name="rolf">
     <words>
+      <w>attrs</w>
+      <w>dataset</w>
       <w>doys</w>
+      <w>dtype</w>
+      <w>filepath</w>
+      <w>filepaths</w>
       <w>geolocs</w>
       <w>mygdal</w>
+      <w>ndvi</w>
       <w>nodata</w>
       <w>reproject</w>
       <w>reprojects</w>
+      <w>tcsv</w>
       <w>timeline</w>
       <w>timeseries</w>
     </words>
