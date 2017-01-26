@@ -146,25 +146,27 @@ class Mygdal:
             result = numpy.array(result_geo_resolution + result_geo_skew, dtype=numpy.dtype(int))
         return result
 
-    def read_pixel(self, pixel, factor_value=1.0, default_value=None, min_value=None, max_value=None):
+    def read_pixel(self, pixel, factor_value=1.0, default_value=numpy.nan, min_value=None, max_value=None):
+        pixel = numpy.asarray(pixel)
         if len(pixel):
             result = self.dataset.ReadAsArray(int(pixel[Mygdal.GT_X]), int(pixel[Mygdal.GT_Y]), xsize=1, ysize=1)
             result = numpy.reshape(result, self.attrs_len)
             good_data = result != self.attrs_nodata
-            result[good_data] *= factor_value
-            if default_value is not None:
-                result[~good_data] = default_value
+            result[~good_data] = default_value
+            result_good_data = result[good_data] * factor_value
+            result[good_data] = result_good_data
             if min_value is not None:
-                result[good_data * result < min_value] = default_value
+                result[good_data] = numpy.where(result_good_data < min_value, default_value, result_good_data)
             if max_value is not None:
-                result[good_data * result > max_value] = default_value
+                result[good_data] = numpy.where(result_good_data > max_value, default_value, result_good_data)
             return result
 
-    def read_pixels(self, pixels, factor=1.0, default_value=None, min_value=None, max_value=None):
+    def read_pixels(self, pixels, factor_value=1.0, default_value=None, min_value=None, max_value=None):
+        pixels = numpy.asarray(pixels)
         if len(pixels):
-            result = self.read_pixel(pixels[0], default_value, min_value, max_value)
+            result = self.read_pixel(pixels[0], factor_value, default_value, min_value, max_value)
             for i in range(1, len(pixels)):
-                result_pixel = self.read_pixel(pixels[i], factor, default_value, min_value, max_value)
+                result_pixel = self.read_pixel(pixels[i], factor_value, default_value, min_value, max_value)
                 result = numpy.vstack((result, result_pixel))
             return result
 
@@ -244,7 +246,7 @@ class MyTCSV:
 
     def __prepare_data_fetch__(self):
         """
-        Process data header and file's tags. It lets the first data row loaded in __row__ member.
+        Process __data__ header and file's tags. It lets the first __data__ row loaded in __row__ member.
         Tags are processed by calling __transform_tag_value__() method.
         """
         row = self.__row__.split(self.tags[MyTCSV.TAG_DELIMITER])
@@ -260,8 +262,8 @@ class MyTCSV:
 
     def __process_row_data__(self):
         """
-        Process data row loaded in __row__ by calling __transform_row_data__() method
-        and stores it into object's data member.
+        Process __data__ row loaded in __row__ by calling __transform_row_data__() method
+        and stores it into object's __data__ member.
         """
         row = self.__transform_row_data__(self.__row__.split(self.tags[MyTCSV.TAG_DELIMITER]))
         if len(self.data):
@@ -273,7 +275,7 @@ class MyTCSV:
 
     def fetch_data(self):
         """
-        Loads all file's data to internal data member. Each fetched row is processed by
+        Loads all file's __data__ to internal __data__ member. Each fetched row is processed by
         __process_row_data__() method.
         """
         self.__process_row_data__()
@@ -283,7 +285,7 @@ class MyTCSV:
 
     def __transform_tag_value__(self, tag_name, tag_value):
         """
-        Process tags values to it final data type (e.g. numbers, dates, lists).
+        Process tags values to it final __data__ type (e.g. numbers, dates, lists).
         This method is called by __prepare_data_fetch__() and is executed after
         all header preparation process. This means that resolve_field_ref() method
         can be used in further overriding implementations.
@@ -297,9 +299,9 @@ class MyTCSV:
 
     def __transform_row_data__(self, fields):
         """
-        Process each fetched row data passed in @fields parameter. At this point, @fields
+        Process each fetched row __data__ passed in @__fields__ parameter. At this point, @__fields__
         is a list of values preprocessed by __process_row_data__. Further implementations of
-        this method may access specific fields by its index and looking for it in @fields parameter.
+        this method may access specific __fields__ by its index and looking for it in @__fields__ parameter.
         Any change must be returned by this method, otherwise it will be lost.
         :param fields: list
         :return: list
@@ -318,7 +320,7 @@ class MyTCSV:
 
     def resolve_field_ref(self, field_ref):
         """
-        If the data has header, tags may contains references to fields's name.
+        If the __data__ has header, tags may contains references to __fields__'s name.
         This method resolves this kind of reference by substituting the name for the field index.
         If a number is passed as an argument of @field_ref, it is automatically returned as such.
         :param field_ref: string
@@ -385,13 +387,13 @@ class Timeline(MyTCSV):
 
     def read_pixel_dates(self, pixel):
         doys = self.doy_stack.read_pixel(pixel)
-        mask_nodata = self.doy_stack.mask_nodata_pixel_attrs(doys, self.doy_stack.attrs_nodata)
+        mask_good_data = ~numpy.isnan(doys)
         dates = self.data[self.tags[Timeline.TAG_DATE_FIELD]]
         if len(doys) != len(dates):
             raise Exception(__error_time_line_length__, __error_time_line_length_msg__ % (len(dates), len(doys)))
         return numpy.array([datetime.datetime(dates[i].year, 1, 1) +
                             datetime.timedelta(days=doys[i] * self.tags[Timeline.TAG_DAY_FACTOR])
-                            if mask_nodata[i] else dates[i] for i in range(len(dates))])
+                            if mask_good_data[i] else dates[i] for i in range(len(dates))])
 
     @staticmethod
     def days_from_base_date(dates, base_date):

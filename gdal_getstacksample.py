@@ -5,11 +5,11 @@ import numpy
 import matplotlib.pyplot as plt
 
 if __name__ == '__main__':
-    s = Samples('../data/samples_new.csv')
+    s = Samples('../__data__/samples_new.csv')
     s.fetch_data()
     label_dict_indexes = s.get_dict_key_indexes('label')
     # print(class_indexes)
-    print(label_dict_indexes.keys())
+    print(label_dict_indexes.cols())
     class_value = 'Soybean-maize'
     my_samples = label_dict_indexes[class_value]
 
