@@ -26,14 +26,14 @@ def datetime64_doy(datetime64, base_date=None):
 def arange(start, stop, step, step_unit='D', array_unit=None, limit=65536):
     if isinstance(start, numpy.datetime64) or isinstance(stop, numpy.datetime64):
         if (stop - start) / (step * numpy.timedelta64(1, step_unit)) > limit:
-            raise ValueError('Number of index to be generated exceeds the limit.')
+            raise ValueError('number of index to be generated exceeds the limit argument.')
         result = numpy.arange(start, stop, step * numpy.timedelta64(1, step_unit))
     elif step_unit is not None and array_unit is not None:
         if (stop - start) / (step * numpy.timedelta64(1, step_unit) / numpy.timedelta64(1, array_unit)) > limit:
-            raise ValueError('Number of index to be generated exceeds the limit.')
+            raise ValueError('number of index to be generated exceeds the limit argument.')
         result = numpy.arange(start, stop, step * numpy.timedelta64(1, step_unit) / numpy.timedelta64(1, array_unit))
     else:
-        raise TypeError("Inconsistent parameters' values informed.")
+        raise TypeError("inconsistent arguments informed.")
     return result
 
 
@@ -72,5 +72,5 @@ def interp(x, xp, fp, left=None, right=None, period=None, method='linear'):
         fp = numpy.append(fp, right if right is not None else fp[-1])
         result = fp[new_argindex_next]
     else:
-        raise TypeError("Inconsistent parameters' values informed.")
+        raise TypeError("inconsistent arguments informed.")
     return result
