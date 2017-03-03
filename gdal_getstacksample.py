@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-import mygdal
+import mygdal_old2
 from mydas import *
 import numpy
 
@@ -16,7 +16,7 @@ if __name__ == '__main__':
     samples['geolocs'] = numpy.array([samples['longitude'], samples['latitude']]).T
     from_srs = 'PROJCS["WGS 84 / UTM zone 21N",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.01745329251994328,AUTHORITY["EPSG","9122"]],AUTHORITY["EPSG","4326"]],UNIT["metre",1,AUTHORITY["EPSG","9001"]],PROJECTION["Transverse_Mercator"],PARAMETER["latitude_of_origin",0],PARAMETER["central_meridian",-57],PARAMETER["scale_factor",0.9996],PARAMETER["false_easting",500000],PARAMETER["false_northing",0],AUTHORITY["EPSG","32621"],AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
     to_srs = 'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.01745329251994328,AUTHORITY["EPSG","9122"]],AUTHORITY["EPSG","4326"]]'
-    samples['geolocs_wgs84'] = mygdal.__reproject__(samples['geolocs'], from_srs, to_srs)
+    samples['geolocs_wgs84'] = mygdal_old2.__reproject__(samples['geolocs'], from_srs, to_srs)
     samples['longitude'] = samples['geolocs_wgs84'][:, 0]
     samples['latitude'] = samples['geolocs_wgs84'][:, 1]
     timeline = numpy.array(["2000-02-18", "2000-03-05", "2000-03-21", "2000-04-06",
@@ -101,9 +101,9 @@ if __name__ == '__main__':
                             "2013-11-17", "2013-12-03", "2013-12-19", "2014-01-01",
                             "2014-01-17", "2014-02-02", "2014-02-18", "2014-03-06",
                             "2014-03-22", "2014-04-07", "2014-04-23", "2014-05-09"], dtype='M8[D]')
-    for i in range(size(samples)):
+    for i in range(rows(samples)):
         samples['from'][i] = timeline[timeline <= samples['from'][i]][-1]
-    for i in range(size(samples)):
+    for i in range(rows(samples)):
         samples['to'][i] = timeline[timeline >= samples['to'][i]][0]
     r = to_recarray(samples, ['id', 'longitude', 'latitude', 'from', 'to', 'label'])
     numpy.savetxt('../data/samples_wgs84.csv', r,
