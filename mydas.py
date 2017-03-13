@@ -129,7 +129,7 @@ def join(m1, m2, by, m1_key_suffix='_1', m2_key_suffix='_2'):
         m2_select = m2.where(selection=m2.index_of(key=by, value=v))
         m1_select = m1.where(selection=[i] * rows(m2_select))
         if rows(m2_select):
-            result.append(bind(m1_select, m2_select, m1_key_suffix=m1_key_suffix, m2_key_suffix=m2_key_suffix))
+            result = result.append(bind(m1_select, m2_select, m1_key_suffix=m1_key_suffix, m2_key_suffix=m2_key_suffix))
     return result
 
 

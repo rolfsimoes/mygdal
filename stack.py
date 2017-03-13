@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-import mygdal_old2
+import geoarray as geo
 import os
 import mysat
 
@@ -8,11 +8,11 @@ lsat_path = '/dados/d3/rolf/LANDSAT_EVI_NDVI/'
 modis_path = '/dados/d3/rolf/MODIS_MOD13Q1/'
 
 
-def my_new_stack(num_bands, gdal_dtype):
-    return mygdal_old2.create(width=320, height=268, bands=num_bands,
-                              proj='+proj=utm +zone=21 +ellps=WGS84 +datum=WGS84 +units=m +no_defs',
-                              gdal_dtype=gdal_dtype,
-                              geotransform=(608775.00, 30.0, 0.0, -1324875.00, 0.0, -30.0))
+def my_new_lsat_stack(bands, dtype, nodata, **metadata):
+    return geo.empty(width=320, height=268, bands=bands,
+                     geotransform=(608775.00, 30.0, 0.0, -1324875.00, 0.0, -30.0),
+                     proj_origin='+proj=utm +zone=21 +ellps=WGS84 +datum=WGS84 +units=m +no_defs',
+                     nodata=nodata, dtype=dtype, **metadata)
 
 
 def my_new_lsat_sensor_stack(lsat_rep_band, save_in_path):
@@ -20,33 +20,24 @@ def my_new_lsat_sensor_stack(lsat_rep_band, save_in_path):
     def sensor_to_int(x):
         return 5 if x == 'LT5' else 7 if x == 'LE7' else 8 if x == 'LC8' else 0
 
-    __SEMANTIC__ = {'SEMANTIC': '5 LT5, 7 LE7, 8 LC8'}
-
     # sensor stack
     sensor_band = lsat_rep_band.apply(source_int=(sensor_to_int, 'source'))
-    t = my_new_stack(num_bands=lsat_rep_band.rows, gdal_dtype=mygdal_old2.GDT_Byte)
+    t = my_new_lsat_stack(bands=lsat_rep_band.rows, dtype='u1', nodata=0, SEMANTIC='5 LT5, 7 LE7, 8 LC8')
     for i in range(lsat_rep_band.rows):
-        t.bands[i].fill(sensor_band['source_int'][i])
-    t.set_metadata(__SEMANTIC__)
-    t.save_as(os.path.join(save_in_path, 'lsat_{0}.tif'.format('source')), overwrite=True)
+        t[t, i] = sensor_band['source_int'][i]
+    geo.write(t, file_name=os.path.join(save_in_path, 'lsat_{0}.tif'.format('source')), overwrite=True)
 
 
 def my_new_lsat_days_stack(lsat_rep_band, save_in_path):
-
-    __SEMANTIC__ = {'SEMANTIC': 'DAYS SINCE 1970-01-01'}
-
     # days after 1970-01-01 stack
-    t = my_new_stack(num_bands=lsat_rep_band.rows, gdal_dtype=mygdal_old2.GDT_UInt16)
+    t = my_new_lsat_stack(bands=lsat_rep_band.rows, dtype='u2', nodata=0, SEMANTIC='DAYS SINCE 1970-01-01')
     for i in range(lsat_rep_band.rows):
-        t.bands[i].fill(lsat_rep_band['datestamp'][i])
-    t.set_metadata(__SEMANTIC__)
-    t.save_as(os.path.join(save_in_path, 'lsat_{0}.tif'.format('days')), overwrite=True)
+        t[t, i] = lsat_rep_band['datestamp'][i]
+    geo.write(t, file_name=os.path.join(save_in_path, 'lsat_{0}.tif'.format('days')), overwrite=True)
 
 
 def make_stack_lsat_only(root, sensor=True, days=True, **bands):
     repository = mysat.landsat(root)
-    repository['source_int'] = list(map(lambda x: 5 if x == 'LT5' else 7 if x == 'LE7' else 8 if x == 'LC8' else 0,
-                                        repository['source']))
     repository = repository.order_by('date')
 
     one_band = repository.where(repository.index_of('product', 'sr_ndvi'))
@@ -65,13 +56,64 @@ def make_stack_lsat_only(root, sensor=True, days=True, **bands):
     for band_name, band in bands.items():
         print('-----------------------------------')
         one_band = repository.where(repository.index_of('product', band))
-        t = my_new_stack(num_bands=one_band.rows, gdal_dtype=mygdal_old2.GDT_Int16)
+        t = my_new_lsat_stack(bands=one_band.rows, dtype='i2', nodata=-9999, SEMANTIC=band_name)
         for i in range(one_band.rows):
-            s = mygdal_old2.open(filename=one_band['file'][i])
-            s.copy_to(t, to_bands=i)
+            s = geo.read(one_band['file'][i], t.box, resample_alg=geo.GRIORA_NearestNeighbour)
+            t[s, i] = s[t, 0]
             print('{0} band {1:02d}: {2}'.format(band_name, i, one_band['file'][i]))
         if t is not None:
-            t.save_as('/dados/d2/rolf/lsat_{0}.tif'.format(band_name), overwrite=True)
+            geo.write(t, file_name='/dados/d2/rolf/lsat_{0}.tif'.format(band_name), overwrite=True)
+
+
+def brick_modis_only(root, sensor=True, days=True, **bands):
+    repository = mysat.mod13q1(root)
+    repository = repository.order_by('date')
+
+    one_band = repository.where(repository.index_of('product', '250m_16_days_NDVI'))
+
+    # sensor stack
+    if sensor:
+        my_new_lsat_sensor_stack(lsat_rep_band=one_band, save_in_path='/dados/d2/rolf')
+        print('{0}: {1} mod13q1_bands'.format('sensor', one_band.rows))
+
+    # days after 1970-01-01 stack
+    if days:
+        my_new_lsat_days_stack(lsat_rep_band=one_band, save_in_path='/dados/d2/rolf')
+        print('{0}: {1} mod13q1_bands'.format('days', one_band.rows))
+
+    # bands stack
+    for band_name, band in bands.items():
+        print('-----------------------------------')
+        one_band = repository.where(repository.index_of('product', band))
+        t = my_new_lsat_stack(bands=one_band.rows, dtype='i2', nodata=-9999, SEMANTIC=band_name)
+        for i in range(one_band.rows):
+            s = geo.read(one_band['file'][i], t.box, resample_alg=geo.GRIORA_NearestNeighbour)
+            t[s, i] = s[t, 0]
+            print('{0} band {1:02d}: {2}'.format(band_name, i, one_band['file'][i]))
+        if t is not None:
+            geo.write(t, file_name='/dados/d2/rolf/lsat_{0}.tif'.format(band_name), overwrite=True)
+########
+    for band_name, bands in modis_bands.items():
+        print('-----------------------------------')
+        paths = []
+        dates = []
+        for band in bands:
+            files = [file for file in os.listdir(band[1]) if file.endswith(band[0] + '.tif')]
+            paths += [os.path.join(band[1], file) for file in files]
+            dates += [band[2](file) for file in files]
+        paths_dates = sorted(zip(paths, dates), key=lambda px: px[1])
+
+        t = mygdal.create(px_size=320, py_size=268, bands=len(paths_dates),
+                          proj='+proj=utm +zone=21 +ellps=WGS84 +datum=WGS84 +units=m +no_defs',
+                          nodata=-3000,
+                          gdal_dtype=mygdal.GDT_Int16,
+                          geotransform=(608775.00, 30.0, 0.0, -1324875.00, 0.0, -30.0))
+
+        for i in range(len(paths_dates)):
+            s = mygdal.open_file(filename=paths_dates[i][0])
+            print('{0} band {1:02d}: {2}'.format(band_name, i, paths_dates[i][0]))
+            s.copy_to(target=t, to_bands=i, resample_alg=mygdal.GRA_NearestNeighbour)
+        t.save_as('/dados/d2/rolf/modis_{0}.tif'.format(band_name), overwrite=True)
 
 
 make_stack_lsat_only(root=lsat_path, sensor=True, days=True, ndvi='sr_ndvi', evi='sr_evi')
@@ -156,29 +198,4 @@ make_stack_lsat_only(root=lsat_path, sensor=True, days=True, ndvi='sr_ndvi', evi
 #         t.save_as('/dados/d2/rolf/lsat_modis_{0}.tif'.format(band_name), overwrite=True)
 #
 #
-# def brick_modis_only():
-#     modis_bands = {'ndvi': [('NDVI', modis_path, modis_extr_date, modis_extr_sensor)],
-#                    'evi': [('EVI', modis_path, modis_extr_date, modis_extr_sensor)]}
-#
-#     for band_name, bands in modis_bands.items():
-#         print('-----------------------------------')
-#         paths = []
-#         dates = []
-#         for band in bands:
-#             files = [file for file in os.listdir(band[1]) if file.endswith(band[0] + '.tif')]
-#             paths += [os.path.join(band[1], file) for file in files]
-#             dates += [band[2](file) for file in files]
-#         paths_dates = sorted(zip(paths, dates), key=lambda px: px[1])
-#
-#         t = mygdal.create(px_size=320, py_size=268, bands=len(paths_dates),
-#                           proj='+proj=utm +zone=21 +ellps=WGS84 +datum=WGS84 +units=m +no_defs',
-#                           nodata=-3000,
-#                           gdal_dtype=mygdal.GDT_Int16,
-#                           geotransform=(608775.00, 30.0, 0.0, -1324875.00, 0.0, -30.0))
-#
-#         for i in range(len(paths_dates)):
-#             s = mygdal.open_file(filename=paths_dates[i][0])
-#             print('{0} band {1:02d}: {2}'.format(band_name, i, paths_dates[i][0]))
-#             s.copy_to(target=t, to_bands=i, resample_alg=mygdal.GRA_NearestNeighbour)
-#         t.save_as('/dados/d2/rolf/modis_{0}.tif'.format(band_name), overwrite=True)
-#
+

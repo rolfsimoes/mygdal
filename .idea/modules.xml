@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<project version="4">
-  <component name="ProjectModuleManager">
-    <modules>
-      <module fileurl="file://$PROJECT_DIR$/../data/.idea/data.iml" filepath="$PROJECT_DIR$/../data/.idea/data.iml" />
-      <module fileurl="file://$PROJECT_DIR$/.idea/mygdal.iml" filepath="$PROJECT_DIR$/.idea/mygdal.iml" />
-    </modules>
-  </component>
-</project>

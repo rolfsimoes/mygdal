@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import os
 import mydas
 import numpy
@@ -7,6 +9,8 @@ import mynumpy
 class landsat(mydas.mydas):
     def __init__(self, root):
         super().__init__()
+        if not os.path.isdir(root):
+            raise ValueError('path `{}` do not exists.'.format(root))
         self.root = root
         file_paths = []
         entities = []
@@ -133,6 +137,8 @@ class landsat(mydas.mydas):
 class mod13q1(mydas.mydas):
     def __init__(self, root):
         super().__init__()
+        if not os.path.isdir(root):
+            raise ValueError('path `{}` do not exists.'.format(root))
         self.root = root
         file_paths = []
         entities = []
